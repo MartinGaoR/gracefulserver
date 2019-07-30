@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
+	"math/rand"
 	"net/http"
 	"time"
 )
@@ -20,18 +22,20 @@ func main() {
 
 func sendRequests(success, fail, done chan struct{}) {
 	go func() {
-		for i := 0; i < 60000; i ++  {
+		for i := 0; i < 1000; i ++  {
 			go sendRequest(success, fail)
 			time.Sleep(100 * time.Millisecond)
 		}
 	}()
-	time.Sleep(60 * time.Second)
+	time.Sleep(4 * time.Minute)
 	close(done)
 
 }
 
 func sendRequest(success, fail chan struct{}) {
-	resp, err := http.Get("http://localhost:59999/sleep/?duration=0s")
+	timeout := getTimeout()
+	path := fmt.Sprintf("http://localhost:59999/sleep/?duration=%ds", timeout)
+	resp, err := http.Get(path)
 	if err != nil {
 		fail <- struct{}{}
 		return
@@ -40,7 +44,30 @@ func sendRequest(success, fail chan struct{}) {
 		fail <- struct{}{}
 		return
 	}
+	data, readErr := ioutil.ReadAll(resp.Body)
+	defer func(){
+		_ = resp.Body.Close()
+	}()
+	if readErr != nil {
+		fail <- struct{}{}
+		return
+	}
+	fmt.Println(string(data))
 	success <- struct{}{}
+}
+
+func getTimeout() int {
+	temp := rand.Int63n(100)
+	switch temp%3 {
+	case 0:
+		return 30
+	case 1:
+		return 5
+	case 2:
+		return 0
+	}
+	// not possible
+	return 0
 }
 
 func getResult(success, fail, done chan struct{}) (int, int) {

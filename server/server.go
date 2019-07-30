@@ -24,7 +24,6 @@ type Server struct {
 	servers []*http.Server
 	listeners []net.Listener
 	//
-	preStartProcess func() error
 	errors chan error
 }
 
