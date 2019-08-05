@@ -16,7 +16,8 @@ var (
 
 func main() {
 	err := server.Serve(
-		&http.Server{Addr: ":59999", Handler: newHandler("Zero  ")},
+		&http.Server{Addr: ":59999", Handler: newHandler("Handler Zero  ")},
+		&http.Server{Addr: ":60000", Handler: newHandler("Handler One  ")},
 	)
 	if err != nil {
 		fmt.Println(err)

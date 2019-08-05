@@ -28,6 +28,7 @@ type ChildServer struct {
 	listeners []net.Listener
 	servers []*http.Server
 	errors chan error
+	hasStartedServing chan struct{}
 
 	fileDescriptorStart int
 }
@@ -38,12 +39,14 @@ func (c *ChildServer) listenAndServe() {
 		panic(err)
 	}
 
-	for index, srv := range c.servers {
-		go func() {
-			c.errors <- srv.Serve(c.listeners[index])
+	for index := range c.servers {
+		go func(index int) {
+			c.errors <- c.servers[index].Serve(c.listeners[index])
 
-		}()
+		}(index)
 	}
+
+	go c.notifyParent()
 
 	waitDone := make(chan struct{})
 	go func() {
@@ -96,7 +99,7 @@ func (c *ChildServer) inheritListener() error {
 			file := os.NewFile(uintptr(i), "listener") // create a new file to the listener (name doesn't matter)
 
 			l, constructErr := net.FileListener(file) // re-construct back the socket listener in this process (the listener is "handed over" to this process)
-			if err != nil {
+			if constructErr != nil {
 				_ = file.Close()
 				err = fmt.Errorf("failed to inherit socket, file descriptor %d: %s", i, constructErr)
 				return
@@ -106,12 +109,31 @@ func (c *ChildServer) inheritListener() error {
 				err = fmt.Errorf("failed to close inherited socket, file descriptor %d: %s", i, closeErr)
 				return
 			}
-			c.listeners = append(c.listeners, l)
+			c.listeners = append(c.listeners, NewListnerWrapper(c.hasStartedServing, l))
 		}
 
 	})
-
 	return err
+}
+
+func (c *ChildServer) notifyParent() {
+	startCount := 0
+	for startCount < len(c.servers) {
+		select {
+		case <- c.hasStartedServing:
+			startCount ++
+		}
+	}
+	parent, err := os.FindProcess(parentPID)
+	if err != nil {
+		c.errors <- fmt.Errorf("failed to find parent process, err: %v", err)
+		return
+	}
+
+	signalErr := parent.Signal(syscall.SIGUSR2)
+	if signalErr != nil {
+		c.errors <- fmt.Errorf("failed to send terminate signal to parent, err: %v", signalErr)
+	}
 }
 
 func (c *ChildServer) terminate(wg *sync.WaitGroup) {
@@ -173,6 +195,7 @@ func NewServer(servers []*http.Server) *ChildServer {
 		servers: servers,
 		listeners: make([]net.Listener, 0, len(servers)),
 		errors: make(chan error, 1+len(servers)),
+		hasStartedServing: make(chan struct{}, 1+ len(servers)),
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
 	"syscall"
@@ -17,25 +18,27 @@ const (
 var originalWD, _ = os.Getwd()
 
 type Launcher struct{
-	wg *sync.WaitGroup
 	mutex *sync.Mutex
-	children []int
+	wg *sync.WaitGroup
+	child int
 	Listeners []net.Listener
 	activeListenerCount int
 	done chan struct{}
+	processBuffer chan int
 	deploy chan string
 	errors chan error
 }
 
 func NewLauncher(wg *sync.WaitGroup, dp  chan string, done chan struct{}, err chan error) Launcher {
 	return Launcher{
-		wg: wg,
 		mutex: &sync.Mutex{},
-		children: []int{},
+		wg: wg,
 		Listeners: []net.Listener{},
 		done: done,
 		deploy: dp,
 		errors: err,
+		// non-buffered channel ensures that at most 2 applications can be run at the same time
+		processBuffer: make(chan int),
 	}
 }
 
@@ -98,7 +101,6 @@ func (l *Launcher) getActiveListeners() []net.Listener {
 }
 
 func (l *Launcher) startChildProcess(binaryName string) (int, error) {
-	l.wg.Add(1)
 	listeners := l.getActiveListeners()
 	var err error
 	// getting the file descriptors from each of the active listeners
@@ -150,6 +152,7 @@ func (l *Launcher) startChildProcess(binaryName string) (int, error) {
 }
 
 func (l *Launcher) Run() {
+	go l.handleSignal()
 	for {
 		select {
 		case adr := <- l.deploy: {
@@ -164,23 +167,44 @@ func (l *Launcher) Run() {
 }
 
 func (l *Launcher) deployBinary(binary string) {
+	l.wg.Add(1)
 	// need to record the old pid
 	newPid, err := l.startChildProcess(binary)
 	if err != nil {
 		l.errors <- err
 		return
 	}
-	l.children = append(l.children, newPid)
+	l.processBuffer <- newPid
 }
 
 func (l *Launcher) terminate() {
-	for _, pid := range l.children {
-		err := syscall.Kill(pid, syscall.SIGKILL)
-		if err != nil {
-			l.errors <- err
-		}
-		l.wg.Done()
+	err := syscall.Kill(l.child, syscall.SIGINT)
+	if err != nil {
+		l.errors <- err
 	}
+	l.wg.Done()
+}
+
+func (l *Launcher) handleSignal() {
+	// create a channel subscribing to system interrupts
+	ch := make(chan os.Signal, 10)
+	signal.Notify(ch, syscall.SIGUSR2)
+
+	for {
+		sig := <- ch
+		switch sig {
+		case syscall.SIGUSR2:
+			if l.child == 0 {
+				// the first version of deployment, need to catch the child process id
+				l.child = <- l.processBuffer
+				continue
+			}
+			l.terminate()
+			// pick up the new process id
+			l.child = <- l.processBuffer
+		}
+	}
+
 }
 
 

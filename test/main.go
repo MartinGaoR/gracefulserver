@@ -9,7 +9,6 @@ import (
 )
 
 func main() {
-	// test mai
 	success := make(chan struct{}, 60000)
 	fail := make(chan struct{}, 60000)
 	done := make(chan struct{}, 1)
@@ -23,20 +22,29 @@ func main() {
 func sendRequests(success, fail, done chan struct{}) {
 	go func() {
 		for i := 0; i < 1000; i ++  {
-			go sendRequest(success, fail)
+			go sendReq("http://localhost:59999/sleep/?duration=%ds", getTimeout(), success, fail)
 			time.Sleep(100 * time.Millisecond)
 		}
 	}()
-	time.Sleep(4 * time.Minute)
+
+	go func() {
+		for i := 0; i < 1000; i ++  {
+			// a more randomized timeout in the second endpoint
+			go sendReq("http://localhost:60000/sleep/?duration=%ds", rand.Intn(30), success, fail)
+			time.Sleep(100 * time.Millisecond)
+		}
+	}()
+
+	time.Sleep(1 * time.Minute)
 	close(done)
 
 }
 
-func sendRequest(success, fail chan struct{}) {
-	timeout := getTimeout()
-	path := fmt.Sprintf("http://localhost:59999/sleep/?duration=%ds", timeout)
-	resp, err := http.Get(path)
+func sendReq(path string, timeout int, success, fail chan struct{}) {
+	p := fmt.Sprintf(path, timeout)
+	resp, err := http.Get(p)
 	if err != nil {
+		fmt.Println(err)
 		fail <- struct{}{}
 		return
 	}

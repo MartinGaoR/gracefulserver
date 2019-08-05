@@ -10,7 +10,7 @@ import (
 
 var (
 	now = time.Now()
-	version = "V1"
+	version = "V3"
 )
 
 func main() {

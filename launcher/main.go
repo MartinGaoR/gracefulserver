@@ -17,11 +17,15 @@ func main() {
 	if addListenerErr != nil {
 		panic(addListenerErr)
 	}
+	addListenerErr = srv.AddListener(":60000")
+	if addListenerErr != nil {
+		panic(addListenerErr)
+	}
 	go srv.Run()
 
 	for i := 0; i < 3; i ++ {
 		fmt.Println("deploying new version")
-		deploy <- fmt.Sprintf("mainv%d", i)
+		deploy <- fmt.Sprintf("applicationV%d", i)
 		time.Sleep(45 * time.Second)
 	}
 
